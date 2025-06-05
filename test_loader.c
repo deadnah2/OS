@@ -17,10 +17,13 @@ static void *plt_resolver(void *handle, int import_id)
     resolver_call_count++;
     resolver_last_id = import_id;
 
+    // Resolver trả về địa chỉ hàm thật
     void *funcs[] = {
-        (void *) test_import0, (void *) test_import1,
+        (void *) test_import0, (void *) test_import1,    // Hàm thật trong main program
     };
     void *func = funcs[import_id];
+
+    // Gán pltgot[import_id] = địa chỉ hàm thật
     DLoader.set_plt_entry(o, import_id, func);
     return func;
 }
@@ -32,33 +35,34 @@ int main()
     dloader_p o = DLoader.load("test_lib.so");
     
     void **func_table = DLoader.get_info(o);
-
+    
     const char *(*func)(void);
     const char *result;
 
     printf("Test exported functions >\n");
 
-    func = (func_t)func_table[0];
+    func = (func_t)func_table[0];   // hello()
     result = func();
-    assert(!strcmp(result, "foo"));
+    assert(!strcmp(result, "hello"));
 
-    func = (func_t)func_table[1];
+    func = (func_t)func_table[1];   // world()  
     result = func();
-    assert(!strcmp(result, "bar"));
+    assert(!strcmp(result, "world"));
 
     printf("OK!\n");
 
     printf("Test imported functions >\n");
-    DLoader.set_plt_resolver(o, plt_resolver,
-                             /* user_plt_resolver_handle */ o);
-
+    
+    DLoader.set_plt_resolver(o, plt_resolver,/* user_plt_resolver_handle */ o);
+    
+    // Gọi func_table[2] -> test_import0() -> import_func0()
     func = (func_t)func_table[2];
     result = func();
     assert(!strcmp(result, "test_import0"));
     assert(resolver_call_count == 1);
     assert(resolver_last_id == 0);
     resolver_call_count = 0;
-    result = func();
+    result = func(); //recall
     assert(!strcmp(result, "test_import0"));
     assert(resolver_call_count == 0);
 

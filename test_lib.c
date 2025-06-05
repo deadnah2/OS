@@ -1,7 +1,7 @@
 #include "lib-support.h"
 
-const char *foo() { return __func__; }
-const char *bar() { return __func__; }
+const char *hello() { return __func__; }
+const char *world() { return __func__; }
 
 const char *import_func0();
 const char *import_func1();
@@ -21,7 +21,7 @@ const char *test_import1()
 }
 
 void *func_table[] = {
-    foo, bar,
+    hello, world,
     test_import0, test_import1,
 };
 

@@ -23,11 +23,6 @@
 #error "Unsupported architecture"
 #endif
 
-/*
- * Every archtecture needs to define its own assembly marco with
- * prefix '_' in arch/, and matches all asm() blocks where the marco
- * will be expanded
- */
 #define PUSH_S(x)           XSTR(_PUSH_S(x))
 #define PUSH(x,y)           XSTR(_PUSH(x,y))
 #define PUSH_IMM(x)         XSTR(_PUSH_IMM(x))
@@ -75,8 +70,8 @@ extern void *pltgot_imports[];
         ".popsection"                                           "\n");
     
 #define MDL_DEFINE_HEADER(user_info_value)                           \
-    static void *plt_trampoline;    /* static */                     \
-    static void *plt_handle;        /* static */                     \
+    void *plt_trampoline;                                            \
+    void *plt_handle;                                                \
     struct program_header PROG_HEADER = {                            \
         .plt_trampoline = &plt_trampoline,                           \
         .plt_handle = &plt_handle,                                   \
