@@ -2,28 +2,37 @@
 #define _SHARED_H_
 
 #include <stdint.h>
+#include <link.h>
 
 #define STR(...) #__VA_ARGS__
 #define XSTR(...) STR(__VA_ARGS__)
-#define _ES_HASH #
-#define ES_HASH() _ES_HASH
-#ifndef ELFW
-#define ELFW(type) _ELFW(__ELF_NATIVE_CLASS, type)
-#define _ELFW(bits, type) __ELFW(bits, type)
-#define __ELFW(bits, type) ELF##bits##_##type
-#endif
 
-#if defined(__x86_64__)
-#include "arch/x86_64.h"
-#elif defined(__arm__)
-#include "arch/arm.h"
-#elif defined(__aarch64__)
-#include "arch/aarch64.h"
-#else
-#error "Unsupported architecture"
-#endif
+// x86_64 only
+typedef Elf64_Ehdr ElfW_Ehdr;
+typedef Elf64_Phdr ElfW_Phdr;
+typedef Elf64_Dyn ElfW_Dyn;
+typedef Elf64_Rela ElfW_Rela;
+typedef Elf64_Addr ElfW_Addr;
+typedef Elf64_Word ElfW_Word;
 
-#define PUSH_S(x)           XSTR(_PUSH_S(x))
+#define PUSH_S(x)      pushq x
+#define _PUSH(x,y)      pushq x(y)
+#define _PUSH_IMM(x)    pushq $##x
+#define _PUSH_STACK_STATE   pushq %rbp; movq %rsp, %rbp
+#define _POP_STACK_STATE   movq %rbp, %rsp; popq %rbp
+#define _POP_S(x)   pop x
+#define _POP(x,y)   movq y(%reg), %x
+#define _JMP_S(x)   jmp x
+#define _JMP_REG(x) _JMP_S(x)
+#define _JMP(x,y)   jmp *x(y)
+#define _CALL(x)    call x
+#define REG_IP      %rip
+#define REG_ARG_1   %rdi
+#define REG_ARG_2   %rsi
+#define REG_RET     %rax
+#define SYS_ADDR_ATTR   "quad"
+#define LABEL_PREFIX    "="
+
 #define PUSH(x,y)           XSTR(_PUSH(x,y))
 #define PUSH_IMM(x)         XSTR(_PUSH_IMM(x))
 #define PUSH_STACK_STATE    XSTR(_PUSH_STACK_STATE)
@@ -83,8 +92,10 @@ typedef struct __DLoader_Internal *dloader_p;
 extern struct __DLoader_API__ {
     dloader_p (*load)(const char *filename);
     void *(*get_info)(dloader_p);
+    //void* (*get_symbol)(dloader_p, const char* name);
     void (*set_plt_resolver)(dloader_p, plt_resolver_t, void *handle);
     void (*set_plt_entry)(dloader_p, int import_id, void *func);
+    void **(*get_pltgot)(dloader_p); 
 } DLoader;
 
 #endif
