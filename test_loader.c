@@ -22,7 +22,7 @@ static void *plt_resolver(void *handle, int import_id)
         (void *) test_import0, (void *) test_import1,    // Hàm thật trong main program
     };
     void *func = funcs[import_id];
-
+    printf("jump here!!");
     // Gán pltgot[import_id] = địa chỉ hàm thật
     DLoader.set_plt_entry(o, import_id, func);
     return func;
@@ -36,20 +36,17 @@ int main()
     
     void **func_table = DLoader.get_info(o);
 
-    // Lấy thông tin PLTGOT thông qua API 
     void **pltgot = DLoader.get_pltgot(o);//
 
     const char *(*func)(void);
     const char *result;
 
     printf("test_import0 address: %p\n", (void*)test_import0);
+    printf("test_import1 address: %p\n", (void*)test_import1);
     printf("=================\n\n");
-
-
-    printf("Imported functions >\n");
+    printf("Imported functions \n");
     
-    DLoader.set_plt_resolver(o, plt_resolver,
-                             /* user_plt_resolver_handle */ o);
+    DLoader.set_plt_resolver(o, plt_resolver, o);
     
     func = (func_t)func_table[0];
     printf("pltgot[0] before first call: %p\n", pltgot[0]);
@@ -64,7 +61,9 @@ int main()
     assert(resolver_call_count == 0);
 
     func = (func_t)func_table[1];
+    printf("pltgot[1] before first call: %p\n", pltgot[1]);
     result = func();
+    printf("pltgot[1] after first call: %p\n", pltgot[1]);
     assert(!strcmp(result, "test_import1"));
     assert(resolver_call_count == 1);
     assert(resolver_last_id == 1);

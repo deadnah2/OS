@@ -16,19 +16,11 @@
 // Cấu trúc đại diện cho một file ELF được load
 struct __DLoader_Internal {
     uintptr_t load_bias;    // Độ lệch địa chỉ khi mapping ELF vào bộ nhớ
-
-    // Con trỏ tới entry point của ELF(struct program_header)(điểm bắt đầu thực thi)
-    void *entry;
-
-    ElfW_Dyn *pt_dynamic;
-
-    void **dt_pltgot;   // Mỗi entry tương ứng với một hàm import
-
-    // Hàm resolver tự định nghĩa
-    plt_resolver_t user_plt_resolver;
-
-    // Một handle (context) truyền cho resolver
-    void *user_plt_resolver_handle;
+    void *entry;            // Entry point (struct program_header)
+    ElfW_Dyn *pt_dynamic;   // Con trỏ tới dynamic section
+    void **dt_pltgot;       // Bảng PLT/GOT
+    plt_resolver_t user_plt_resolver;   // Hàm resolver tự định nghĩa
+    void *user_plt_resolver_handle;     // handle (context) truyền cho resolver
 };
 
 // Hàm thay thế memset(buf, 0, n)
@@ -102,21 +94,21 @@ ElfW_Word get_dynamic_entry(ElfW_Dyn *dynamic, int field){
 
 // PLT Trampoline - assembly code để xử lý PLT resolution
 void plt_trampoline();
-asm(".pushsection .text,\"ax\",\"progbits\"" "\n"
+asm(".pushsection .text," ax "\n"
     "plt_trampoline:"                        "\n"
-    POP_S(REG_ARG_1)    /* handle */         "\n"
-    POP_S(REG_ARG_2)    /* import_id */      "\n"
+    POP_S(%rdi)    /* handle */         "\n"
+    POP_S(%rsi)    /* import_id */      "\n"
     PUSH_STACK_STATE                         "\n"
     CALL(system_plt_resolver)                "\n"
     POP_STACK_STATE                          "\n"
-    JMP_REG(REG_RET)  /* Nhảy đến địa chỉ hàm đã resolve*/    "\n"
+    JMP_REG(%rax)  /* Nhảy đến địa chỉ hàm đã resolve*/    "\n"
     ".popsection"                            "\n");
 
 void *system_plt_resolver(dloader_p o, int import_id){
     return o->user_plt_resolver(o->user_plt_resolver_handle, import_id);
 }
 
-// API chính: Load một file ELF và chuẩn bị để thực thi
+// API chính: Load file ELF 
 dloader_p api_load(const char *filename){
     size_t pagesize = 0x1000;   // 4KB page size
 
@@ -125,7 +117,6 @@ dloader_p api_load(const char *filename){
     if (fd < 0) {
         fail(filename, "Failed to open");
     }
-
     ElfW_Ehdr ehdr;
     if (pread(fd, &ehdr, sizeof(ehdr), 0) != sizeof(ehdr)) {
         fail(filename, "Failed to read ELF header");
@@ -141,23 +132,21 @@ dloader_p api_load(const char *filename){
         ehdr.e_phentsize != sizeof(ElfW_Phdr))
         fail(filename, "File has no valid ELF header!");
     
-    // Kiểm tra kiến trúc CPU có được hỗ trợ không
+    // Kiểm tra kiến trúc CPU
     if (ehdr.e_machine != EM_X86_64) fail(filename, "ELF file has wrong architecture! ");
+
+    // Không hỗ trợ shared library (ET_DYN)
+    if (ehdr.e_type != ET_DYN)
+        fail(filename, "ELF file not ET_DYN! ");
 
     // Đọc program headers
     ElfW_Phdr* phdr = malloc(ehdr.e_phnum * sizeof(ElfW_Phdr));
-    if (pread(fd, phdr, ehdr.e_phnum * sizeof(ElfW_Phdr), ehdr.e_phoff) 
-        != ehdr.e_phnum * sizeof(ElfW_Phdr)) {
+    if (pread(fd, phdr, ehdr.e_phnum * sizeof(ElfW_Phdr), ehdr.e_phoff) != ehdr.e_phnum * sizeof(ElfW_Phdr)) {
         fail(filename, "Failed to read program headers");
         free(phdr);
         close(fd);
     } 
   
-    // Không hỗ trợ shared library (ET_DYN)
-    if (ehdr.e_type != ET_DYN)
-        fail(filename, "ELF file not ET_DYN! ");
-
-    pread(fd, phdr, sizeof(phdr[0]) * ehdr.e_phnum, ehdr.e_phoff);
     // Tìm segment PT_LOAD đầu tiên và cuối
     const ElfW_Phdr *first_load = NULL;
     const ElfW_Phdr *last_load = NULL;
@@ -182,13 +171,13 @@ dloader_p api_load(const char *filename){
      * Map segment đầu tiên và reserve không gian cho các segment còn lại
      * cũng như các khoảng trống giữa các segment
      */
-    const uintptr_t mapping =
-        (uintptr_t) mmap((void *) round_down(first_load->p_vaddr, pagesize), 
-                        span, prot_from_phdr(first_load), MAP_PRIVATE, fd, 
-                        round_down(first_load->p_offset, pagesize));
+    ElfW_Addr desired_addr = round_down(first_load->p_vaddr, pagesize);
+    ElfW_Addr file_offset = round_down(first_load->p_offset, pagesize);
+    const uintptr_t mapping = (uintptr_t) mmap((void *) desired_addr, span, 
+                                prot_from_phdr(first_load), MAP_PRIVATE, fd, file_offset);
 
     // Tính toán load_bias 
-    const ElfW_Addr load_bias = mapping - round_down(first_load->p_vaddr, pagesize);
+    const ElfW_Addr load_bias = mapping - desired_addr;
     
     // Theo dõi segment read-only để xử lý relocation
     const ElfW_Phdr *ro_load = NULL;
@@ -277,7 +266,7 @@ dloader_p api_load(const char *filename){
         if (reloc_type == R_X86_64_RELATIVE) {
             // Địa chỉ cần được relocate
             ElfW_Addr* addr = (ElfW_Addr*)(load_bias + relocs[i].r_offset);
-            // Nếu addr nằm trong vùng read-only (.text), ta cần tạm thời
+            // Nếu addr nằm trong vùng read-only (.text), tạm thời
             // cấp quyền WRITE để sửa đổi, sau đó restore lại quyền cũ
             if ((intptr_t) addr < ro_end && (intptr_t) addr >= ro_start) {
                 mprotect((void*) round_down((intptr_t) addr, pagesize), pagesize, PROT_WRITE);
@@ -342,8 +331,7 @@ void api_set_plt_entry(dloader_p o, int import_id, void *func)
 // API: Lấy con trỏ đến bảng PLTGOT
 void **api_get_pltgot(dloader_p o)
 {
-    struct program_header *PROG_HEADER = o->entry;
-    return PROG_HEADER->pltgot;
+    return ((struct program_header *)(o->entry))->pltgot;
 }
 
 // Cấu trúc API chính được export

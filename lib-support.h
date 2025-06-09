@@ -21,17 +21,10 @@ typedef Elf64_Word ElfW_Word;
 #define _PUSH_STACK_STATE   pushq %rbp; movq %rsp, %rbp
 #define _POP_STACK_STATE   movq %rbp, %rsp; popq %rbp
 #define _POP_S(x)   pop x
-#define _POP(x,y)   movq y(%reg), %x
 #define _JMP_S(x)   jmp x
 #define _JMP_REG(x) _JMP_S(x)
 #define _JMP(x,y)   jmp *x(y)
 #define _CALL(x)    call x
-#define REG_IP      %rip
-#define REG_ARG_1   %rdi
-#define REG_ARG_2   %rsi
-#define REG_RET     %rax
-#define SYS_ADDR_ATTR   "quad"
-#define LABEL_PREFIX    "="
 
 #define PUSH(x,y)           XSTR(_PUSH(x,y))
 #define PUSH_IMM(x)         XSTR(_PUSH_IMM(x))
@@ -40,7 +33,6 @@ typedef Elf64_Word ElfW_Word;
 #define JMP_REG(x)          XSTR(_JMP_REG(x))
 #define JMP(x,y)            XSTR(_JMP(x,y))
 #define POP_S(x)            XSTR(_POP_S(x))
-#define POP(x,y)            XSTR(_POP(x,y))
 #define POP_STACK_STATE     XSTR(_POP_STACK_STATE)
 #define CALL(x)             XSTR(_CALL(x))
 
@@ -53,41 +45,6 @@ struct program_header{
     void *user_info;
 };
 
-extern void *pltgot_imports[];
-
-#define MDL_PLT_BEGIN                                                \
-    asm(".pushsection .text,\"ax\", \"progbits\""               "\n" \
-        "slowpath_common:"                                      "\n" \
-        PUSH(plt_handle, REG_IP)                                "\n" \
-        JMP(plt_trampoline, REG_IP)                             "\n" \
-        ".popsection" /* start of PLTGOT table. */              "\n" \
-        ".pushsection .my_pltgot,\"aw\",\"progbits\""           "\n" \
-        "pltgot_imports:"                                       "\n" \
-        ".popsection"                                           "\n");
-
-#define MDL_PLT_ENTRY(number, name)                                  \
-    asm(".pushsection .text,\"ax\", \"progbits\""               "\n" \
-        #name ":"                                               "\n" \
-        JMP(pltgot_ ##name, REG_IP)                             "\n" \
-        "slowpath_" #name ":"                                   "\n" \
-        PUSH_IMM(number)                                        "\n" \
-        JMP_S(slowpath_common)                                  "\n" \
-        ".popsection" /* entry in PLTGOT table */               "\n" \
-        ".pushsection .my_pltgot,\"aw\",\"progbits\""           "\n" \
-        "pltgot_" #name ":"                                     "\n" \
-        "." SYS_ADDR_ATTR " slowpath_" #name                    "\n" \
-        ".popsection"                                           "\n");
-    
-#define MDL_DEFINE_HEADER(user_info_value)                           \
-    void *plt_trampoline;                                            \
-    void *plt_handle;                                                \
-    struct program_header PROG_HEADER = {                            \
-        .plt_trampoline = &plt_trampoline,                           \
-        .plt_handle = &plt_handle,                                   \
-        .pltgot = pltgot_imports,                                    \
-        .user_info = user_info_value,                                \
-    };
-    
 typedef struct __DLoader_Internal *dloader_p;
 extern struct __DLoader_API__ {
     dloader_p (*load)(const char *filename);
@@ -97,5 +54,42 @@ extern struct __DLoader_API__ {
     void (*set_plt_entry)(dloader_p, int import_id, void *func);
     void **(*get_pltgot)(dloader_p); 
 } DLoader;
+
+extern void *pltgot_imports[];
+#define ax "\"ax\", \"progbits\""
+#define aw "\"aw\", \"progbits\""
+
+#define PLT_BEGIN                                                \
+    asm(".pushsection .text," ax                            "\n" \
+        "slowpath_common:"                                      "\n" \
+        PUSH(plt_handle, %rip)                                "\n" \
+        JMP(plt_trampoline, %rip)                             "\n" \
+        ".popsection" /* start of PLTGOT table. */              "\n" \
+        ".pushsection ._pltgot," aw                                 "\n" \
+        "pltgot_imports:"                                       "\n" \
+        ".popsection"                                           "\n");
+
+#define PLT_ENTRY(number, name)                                  \
+    asm(".pushsection .text," ax                    "\n" \
+        #name ":"                                               "\n" \
+        JMP(pltgot_ ##name, %rip)                             "\n" \
+        "slowpath_" #name ":"                                   "\n" \
+        PUSH_IMM(number)                                        "\n" \
+        JMP_S(slowpath_common)                                  "\n" \
+        ".popsection" /* entry in PLTGOT table */               "\n" \
+        ".pushsection ._pltgot," aw                             "\n" \
+        "pltgot_" #name ":"                                     "\n" \
+        ".quad  slowpath_" #name                             "\n" \
+        ".popsection"                                           "\n");
+    
+#define DEFINE_HEADER(user_info_value)                           \
+    void *plt_trampoline;                                            \
+    void *plt_handle;                                                \
+    struct program_header PROG_HEADER = {                            \
+        .plt_trampoline = &plt_trampoline,                           \
+        .plt_handle = &plt_handle,                                   \
+        .pltgot = pltgot_imports,                                    \
+        .user_info = user_info_value,                                \
+    };
 
 #endif
